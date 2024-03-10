@@ -1,5 +1,5 @@
-# V0.7 - 08/02/2024
-# Compiled and tested on esphome 2024.2.0 and HA 2024.2.2
+# V0.8 - 10/03/2024
+# Compiled and tested on esphome 2024.2.1 and HA 2024.2.5
 # Try this with any other versions and it might work, but otherwise "you are in a maze of twisty little passages, all alike" so good luck in your future endeavours.
 # To use, create a config in esphome with code. Change or remove references to sensors as required to suit your environment.
 # This code refers to external image files - feel free to remove and/or change. For legal reasons I cannot share these.
@@ -71,11 +71,17 @@ esp32:
 # Not really a breaking change - it's an issue I suspect due to the device being slow and this error previously
 # simply not being reported
 logger:
-  level: DEBUG
+  level: VERBOSE #makes uart stream available in esphome logstream
   logs:
     component: ERROR
-    # The following just stops the noise from the ble_presence flooding the logs if using that.
-    # text_sensor: NONE
+  #Turn off UART logging over RX/TX 
+  baud_rate: 0
+
+#uart:
+#  rx_pin: GPIO20
+#  tx_pin: GPIO21
+#  baud_rate: 9600
+#  id: uart_bus
 
 # Enable Home Assistant API
 api:
@@ -197,15 +203,15 @@ number:
     update_interval: 1s
     step: 1
   # This is a binary off or on to toggle the light off or on
-  - platform: template
-    optimistic: true
-    name: "$devicename light state"
-    id: light_state
-    min_value: 0
-    max_value: 1
-    initial_value: 0
-    update_interval: 1s
-    step: 1
+#  - platform: template
+#    optimistic: true
+#    name: "$devicename light state"
+#    id: light_state
+#    min_value: 0
+#    max_value: 1
+#    initial_value: 0
+#    update_interval: 1s
+#    step: 1
 
 #Create a script to turn the screen off after a set period
 script:
@@ -220,6 +226,9 @@ script:
 text_sensor:
 #  - platform: ble_scanner
 #    name: "BLE Devices Scanner"
+  - platform: homeassistant
+    id: light_state
+    entity_id: light.guest_lamp
   - platform: CST816S_touchscreen
     id: my_touch_screen
     on_value:
@@ -323,8 +332,12 @@ text_sensor:
                     state: 'LONG PRESS'
                 - display.is_displaying_page: page4     
             then:
-              - logger.log: "Long press on page4 - toggle light"           
-              - number.increment: light_state
+              - logger.log: "Long press on page4 - toggle light"
+              # Option to toggle a light - note need to go to settings/devices/esphome click on configure for the device and allow the device to make HA calls                
+              - homeassistant.service:
+                  service: light.toggle
+                  data:
+                    entity_id: light.guest_lamp
               # refresh the screen
               - component.update: watchface
         - if:
@@ -492,9 +505,9 @@ display:
           it.circle(120, 120, 119, id(my_blue));
       - id: page4
         lambda: |-
-          if (id(light_state).state == 0)
+          if (id(light_state).state == "off")
             it.image(85, 60, id(light_off), COLOR_ON, COLOR_OFF);
-          if (id(light_state).state == 1)
+          if (id(light_state).state == "on")
             it.image(85, 60, id(light_on), COLOR_ON, COLOR_OFF);
           it.printf(120, 200, id(font_16), id(my_blue), TextAlign::CENTER, "lamp");
           it.circle(120, 120, 119, id(my_green));   
