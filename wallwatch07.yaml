@@ -71,7 +71,7 @@ esp32:
 # Not really a breaking change - it's an issue I suspect due to the device being slow and this error previously
 # simply not being reported
 logger:
-  level: VERBOSE #makes uart stream available in esphome logstream
+  level: DEBUG #makes uart stream available in esphome logstream
   logs:
     component: ERROR
   #Turn off UART logging over RX/TX 
@@ -182,17 +182,9 @@ i2c:
   #frequency: 400kHz
 
 number:
-  - platform: template
-    optimistic: true
-    name: "$devicename thermostat"
-    id: thermostat_adjust
-    min_value: 18
-    max_value: 35
-    initial_value: 20
-    update_interval: 1s
-    step: 1
   # This is a binary off or on to toggle the virtual thermostat states between off or heat or cool
   # Where 0 is off and 1 is heat and 2 is cool
+  # There is now a 'climate.toggle' option but for me I don't want to cycle through all the options
   - platform: template
     optimistic: true
     name: "$devicename therm state"
@@ -202,16 +194,7 @@ number:
     initial_value: 0
     update_interval: 1s
     step: 1
-  # This is a binary off or on to toggle the light off or on
-#  - platform: template
-#    optimistic: true
-#    name: "$devicename light state"
-#    id: light_state
-#    min_value: 0
-#    max_value: 1
-#    initial_value: 0
-#    update_interval: 1s
-#    step: 1
+
 
 #Create a script to turn the screen off after a set period
 script:
@@ -275,8 +258,11 @@ text_sensor:
             then:
               - logger.log: "Swiped up on page1"
               #Note that this is the reverse of what you might expect
-              - number.decrement: thermostat_adjust
-              - delay: 0.5s
+              - homeassistant.service:
+                  service: climate.set_temperature
+                  data_template:
+                    entity_id: climate.thermostat_sitting_2
+                    temperature: '{{(state_attr(''climate.thermostat_sitting_2'' , ''temperature'')|round(0)) - 1 }}'
               - component.update: watchface
         - if:
             condition:
@@ -288,8 +274,11 @@ text_sensor:
             then:
               - logger.log: "Swiped down on page1"
               #Note that this is the reverse of what you might expect              
-              - number.increment: thermostat_adjust
-              - delay: 0.5s
+              - homeassistant.service:
+                  service: climate.set_temperature
+                  data_template:
+                    entity_id: climate.thermostat_sitting_2
+                    temperature: '{{(state_attr(''climate.thermostat_sitting_2'' , ''temperature'')|round(0)) + 1 }}'
               - component.update: watchface
 
         - if:
