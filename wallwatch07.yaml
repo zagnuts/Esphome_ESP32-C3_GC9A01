@@ -1,6 +1,9 @@
-# V0.8 - 10/03/2024
-# Compiled and tested on esphome 2024.2.1 and HA 2024.2.5
+# V0.9 - 8/04/2024
+# Compiled and tested on esphome 2024.3.2 and HA 2024.4.1
+# PLEASE NOTE:
 # Try this with any other versions and it might work, but otherwise "you are in a maze of twisty little passages, all alike" so good luck in your future endeavours.
+#
+#
 # To use, create a config in esphome with code. Change or remove references to sensors as required to suit your environment.
 # This code refers to external image files - feel free to remove and/or change. For legal reasons I cannot share these.
 # Pay close attention to the "substitutions" section and update to suit you
@@ -131,6 +134,22 @@ time:
 #    ibeacon_uuid: '68586f1e-89c2-11eb-8dcd-0242ac130003'
 #    name: "ESP32 BLE Tracker Test Service iBeacon"
 
+select:
+  - platform: template
+    name: Thermostat Mode
+    id: mode
+    options:
+      - "off"
+      - "cool"
+      - "heat"
+    initial_option: "off"
+    optimistic: true
+#  - select.next: mode
+#    set_action:
+#      - logger.log:
+#          format: "Chosen option: %s"
+#          args: ["x.c_str()"]
+
 sensor:
   - platform: uptime
     name: "$devicename Uptime"
@@ -163,9 +182,11 @@ sensor:
     update_interval: 60s
 
 external_components:
-  - source: github://bearpawmaxim/esphome@pr3625fix
-    components: [ gc9a01 ]
+#  - source: github://bearpawmaxim/esphome@pr3625fix
+#    components: [ gc9a01 ]
+# Above is no longer required as support now integrated into ili9xxx
   - source: github://GadgetFactory/CST816S_touchscreen@1.0.0 
+# Still need this external driver to support the touch screen
 
 spi:
   mosi_pin: $mopin
@@ -245,6 +266,16 @@ text_sensor:
                 - display.is_displaying_page: page1     
             then:
               - logger.log: "Long press on page1"
+#              - select.next: mode
+#              - homeassistant.service:
+#                service: climate.set_hvac_mode
+#                  data:
+#                    hvac_mode: "off"
+#                  target:
+#                    entity_id:
+#                    - climate.thermostat_sitting_2
+# Note that this is changing a sensor value in HA, and and automation is then acting on that to then change the 
+# thermostat state eg from cooling to off
               - number.decrement: thermostat_state
               - delay: 0.5s
               - component.update: watchface
@@ -258,6 +289,7 @@ text_sensor:
             then:
               - logger.log: "Swiped up on page1"
               #Note that this is the reverse of what you might expect
+              # This is directly reducing the thermostat set temperature in HA by one degree
               - homeassistant.service:
                   service: climate.set_temperature
                   data_template:
@@ -274,6 +306,7 @@ text_sensor:
             then:
               - logger.log: "Swiped down on page1"
               #Note that this is the reverse of what you might expect              
+              # This is directly increasing the thermostat set temperature in HA by one degree
               - homeassistant.service:
                   service: climate.set_temperature
                   data_template:
@@ -434,11 +467,11 @@ image:
     id: gifArt
 
 display:
-#  - platform: ili9xxx
-#    model: gc9a01
+  - platform: ili9xxx
+    model: GC9A01A
 # Above is for when or if this is merged into the ili9xxx platform
 # Until then though, need to use an external component
-  - platform: gc9a01
+#  - platform: gc9a01
     id: watchface
     reset_pin: $repin
     cs_pin: $cspin
@@ -447,8 +480,8 @@ display:
       ignore_strapping_warning: true
       # The above is to remove the strapping pin warning message
  # The next are optional
-    width: 240
-    height: 240
+#    width: 240
+#    height: 240
 # Disable this if using ble_tracker as the poor thing doesn't have enough memory 
 # Enable it if not using ble_tracker as you will find the screen looks and responds better
 # Disable this if you are encountering random reboots or other issues   
@@ -456,7 +489,8 @@ display:
 # How often to refresh the display
     update_interval: 1s
 # Rotate the screen so usb socket is pointing down
-    rotation: 90
+#    rotation: 90
+# No longer needed with integrated ili9xxx support
 
     pages:
       - id: page1
