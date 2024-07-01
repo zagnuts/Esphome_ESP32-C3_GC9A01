@@ -1,10 +1,18 @@
-# V0.9 - 8/04/2024
-# Compiled and tested on esphome 2024.3.2 and HA 2024.4.1
+# V1.0 - 1/7/2024
+# Compiled and tested on esphome 2024.6.4 and HA 2024.6.4
+#
+# There are a lot of comments in this code - some are to help guide when using
+# Some code is commented out - those are works in progress and in general can be ignored
+#
 # PLEASE NOTE:
+#
 # Try this with any other versions and it might work, but otherwise "you are in a maze of twisty little passages, all alike" so good luck in your future endeavours.
+# This is because an external component is still required to support the touch controller, and as that is not always updated when an
+# update to esphome or home assistant is released, you may see errors when compiling. In short, if you see compilation errors, always
+# check to see if you are running versions of esphome and home assistant that are the same as noted above. If you are running a newer
+# version then check the community discussions for resolution
 #
-#
-# To use, create a config in esphome with code. Change or remove references to sensors as required to suit your environment.
+# To use, create a config in esphome with this code. Change or remove references to sensors as required to suit/match your environment.
 # This code refers to external image files - feel free to remove and/or change. For legal reasons I cannot share these.
 # Pay close attention to the "substitutions" section and update to suit you
 # Then compile and save the file locally
@@ -34,11 +42,16 @@
 #    have issues (eg random rebooting) doing that AND running the display at the same time
 # - processor is weak and memory low, so do not expect it to be able to handle animation too well 
 # - specs say power consumption is 100mA - but varies depending on load and if display is active
+# - screen is 240 pixels wide, so radius is 120 pixels, circumference 754 pixels
+#   a square would have sides 170 pixels to just fit - maybe 169 to be safe
+#   adjust images to suit. Keep in mind that images will eat away the limited memory on the device.
+
 
 substitutions:
   devicename: wallwatch07
   friendname: WallWatch07
   location: guest
+# Change the timezone to suit your location, or even just remove it - it will likely be picked up automatically
   timez: Australia/Melbourne
   board: esp32-c3-devkitm-1
 # Display state on initial start
@@ -51,6 +64,7 @@ substitutions:
   repin: GPIO1
   dcpin: GPIO2
 # Note - you may see an error on compilation "WARNING GPIO2 is a Strapping PIN and should be avoided" - ignore this as you have no choice
+# This error message may be removed via the "ignore_strapping_warning" option for the screen driver
   bkpin: GPIO3
   clpin: GPIO6
   mopin: GPIO7
@@ -93,6 +107,7 @@ api:
 
 ota:
   password: !secret ota_password
+  platform: esphome
 
 wifi:
   ssid: !secret wifi_ssid
@@ -107,6 +122,7 @@ captive_portal:
 
 time:
   - platform: homeassistant
+# Feel free to remove the timezone reference - it will probably work it out automatically
     timezone: "$timez"
     id: esptime
 
@@ -171,7 +187,7 @@ sensor:
     attribute: temperature
   - platform: homeassistant
     id: room_temperature
-    entity_id: sensor.lumi_lumi_sensor_ht_temperature
+    entity_id: sensor.lumi_lumi_sens_temperature_2
   - platform: template
     name: $devicename free memory
     lambda: return heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -182,11 +198,10 @@ sensor:
     update_interval: 60s
 
 external_components:
-#  - source: github://bearpawmaxim/esphome@pr3625fix
-#    components: [ gc9a01 ]
-# Above is no longer required as support now integrated into ili9xxx
   - source: github://GadgetFactory/CST816S_touchscreen@1.0.0 
 # Still need this external driver to support the touch screen
+# Supported added via https://github.com/esphome/esphome/pull/5941
+# Currently testing
 
 spi:
   mosi_pin: $mopin
@@ -212,6 +227,9 @@ number:
     id: thermostat_state
     min_value: 0
     max_value: 2
+    # on boot, use the value it had if possible
+    restore_value: True
+    # if can't restore the value, then make it 0 ie off
     initial_value: 0
     update_interval: 1s
     step: 1
@@ -441,6 +459,7 @@ animation:
 # This is an 80*116 pixel, 144 pixel/inch image of a light bulb in the off position
   - file: "images/lightoff.png"
     id: light_off
+    type: BINARY
 # This is an 80*116 pixel, 144 pixel/inch image of a glowing light bulb
   - file: "images/lighton.png"
     id: light_on
@@ -453,25 +472,20 @@ animation:
   - file: "images/redarrow.png"
     id: redarrow
     type: RGB565
-#    resize: 80x80
-#    type: RGB565
-
-# Need the following image section currently with esphome since 2023.7.0
-# Otherwise you will probably get 'id' is a required option for [0] errors when trying to compile
-# I will note here a pet hate with breaking changes - I know that this is community developed code
-# but still, it's a total pain when updating brings in weird issues like this and I continue to be in 
-# awe when the community discover work arounds that are so left field
-image:
-# Same image used above in the animation section - note that this is just here currently to 
-  - file: "icons/2051v2.gif"
-    id: gifArt
+  - file: "images/wifi-qr.png"
+    id: qrcode
+    type: BINARY
+# This is a QR code with your guest or home wifi in it - can create using https://qifi.org/
+# Ideally resize the resulting image to, say, 169 pixels by 169 pixels
+# If you want to give someone access to your wifi, then if their device has a camera then they
+# may be able to scan the qr code and automatically join
+# As a side note, if you have a decent 3d printer you can also use https://printer.tools/qrcode2stl/
+# to create a STL file that you can use to print a physical qr code - I reduce that by 40% then print it
+# using white PLA and 0.1mm resolution, then colour the ridges in with a black permanent marker
 
 display:
   - platform: ili9xxx
     model: GC9A01A
-# Above is for when or if this is merged into the ili9xxx platform
-# Until then though, need to use an external component
-#  - platform: gc9a01
     id: watchface
     reset_pin: $repin
     cs_pin: $cspin
@@ -490,7 +504,7 @@ display:
     update_interval: 1s
 # Rotate the screen so usb socket is pointing down
 #    rotation: 90
-# No longer needed with integrated ili9xxx support
+# No longer needed as integrated ili9xxx driver rotates the screen by default
 
     pages:
       - id: page1
@@ -535,6 +549,11 @@ display:
           it.printf(120, 200, id(font_16), id(my_blue), TextAlign::CENTER, "lamp");
           it.circle(120, 120, 119, id(my_green));   
       - id: page5
+        lambda: |-       
+          it.image(35, 35, id(qrcode));
+          it.printf(120, 220, id(font_16), id(my_green), TextAlign::CENTER, "guest wifi");
+          it.circle(120, 120, 119, id(my_blue));   
+      - id: page6
         lambda: |-
           id(clear_day).next_frame();
           it.printf(120,30, id(font_16), id(my_blue), TextAlign::CENTER, "help");
