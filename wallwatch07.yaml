@@ -1,14 +1,14 @@
-# V1.0 - 1/7/2024
-# Compiled and tested on esphome 2024.6.4 and HA 2024.6.4
+# V1.1 - 1/7/2024
+# Compiled and tested on esphome 2024.10.3 and HA 2024.11.1
 #
 # There are a lot of comments in this code - some are to help guide when using
 # Some code is commented out - those are works in progress and in general can be ignored
 #
 # PLEASE NOTE:
 #
-# Try this with any other versions and it might work, but otherwise "you are in a maze of twisty little passages, all alike" so good luck in your future endeavours.
-# This is because an external component is still required to support the touch controller, and as that is not always updated when an
-# update to esphome or home assistant is released, you may see errors when compiling. In short, if you see compilation errors, always
+# Try this with any other versions of HA or Esphome than noted above and it might work, but otherwise "you are in a maze of twisty little passages, all alike" so 
+# good luck in your future endeavours. This is because an external component is still required to support the touch controller, and as that is not always updated 
+# when an update to esphome or home assistant is released, you may see errors when compiling. In short, if you see compilation errors, always
 # check to see if you are running versions of esphome and home assistant that are the same as noted above. If you are running a newer
 # version then check the community discussions for resolution
 #
@@ -77,6 +77,10 @@ substitutions:
 esphome:
   name: $devicename
   friendly_name: $friendname
+  project:
+    name: "ninkasi.wallwatch"
+    version: "1.0.1"
+  comment: Wall Controller $location
 
 esp32:
   board: $board
@@ -487,6 +491,7 @@ display:
   - platform: ili9xxx
     model: GC9A01A
     id: watchface
+    invert_colors: true
     reset_pin: $repin
     cs_pin: $cspin
     dc_pin: 
