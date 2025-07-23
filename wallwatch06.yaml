@@ -1,0 +1,626 @@
+# V2.0 - 23 July 2025 - Fixed YAML indentation in on_value trigger
+# Compiled and tested on esphome 2025.7.3 and HA 2025.7.3
+substitutions:
+  devicename: wallwatch06
+  friendname: WallWatch06
+  location: master
+  # Change the timezone to suit your location, or even just remove it - it will likely be picked up automatically
+  timez: Australia/Melbourne
+  board: esp32-c3-devkitm-1
+  # Display state on initial start
+  # Note that the screensaver only starts after the first touch of the display
+  # Change to ALWAYS_OFF if want the screen to be off after booting, ALWAYS_ON if want it on at start eg for initial troubleshooting
+  screenstart: ALWAYS_OFF
+  # Timeout for the screen
+  screensaver: 1 min
+  #GPIO pins for the LCD screen
+  repin: GPIO1
+  dcpin: GPIO2
+  # Note - you may see an error on compilation "WARNING GPIO2 is a Strapping PIN and should be avoided" - ignore this as you have no choice
+  # This error message may be removed via the "ignore_strapping_warning" option for the screen driver
+  bkpin: GPIO3
+  clpin: GPIO6
+  mopin: GPIO7
+  cspin: GPIO10
+  # GPIO pins for the touch screen
+  sdapin: GPIO4
+  sclpin: GPIO5
+  intpin: GPIO8
+
+esphome:
+  name: $devicename
+  friendly_name: $friendname
+  project:
+    name: "ninkasi.wallwatch"
+    version: "2025.7.23" # Changed version to date of release
+  comment: Wall Controller $location
+
+esp32:
+  #  board: $board
+  #  framework:
+  #    type: arduino esp32-c3-devkitm-1
+  board: $board
+  framework:
+    type: esp-idf
+    version: recommended
+#    version: latest
+
+# Enable logging
+# Change to avoid "Components should block for at most 20-30ms" warning messages in the log - an issue since 2023.7.0
+# Not really a breaking change - it's an issue I suspect due to the device being slow and this error previously
+# simply not being reported
+logger:
+  level: DEBUG #makes uart stream available in esphome logstream
+  logs:
+    component: ERROR
+  #Turn off UART logging over RX/TX
+  baud_rate: 0
+
+#uart:
+#  rx_pin: GPIO20
+#  tx_pin: GPIO21
+#  baud_rate: 9600
+#  id: uart_bus
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret esphome_encryption_key
+
+ota:
+  password: !secret ota_password
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "$devicename Fallback Hotspot"
+    password: !secret fallback_password
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    timezone: "$timez"
+    id: esptime
+    on_time_sync:
+      - script.execute: time_update
+    on_time:
+      - minutes: '*'
+        seconds: 0
+        then:
+          - script.execute: time_update
+
+binary_sensor:
+  - platform: touchscreen
+    id: change_page # Name is not needed, ID is sufficient
+    # This zone now covers the entire 240x240 screen
+    x_min: 0
+    y_min: 0
+    x_max: 240
+    y_max: 240
+    on_press:
+      - script.execute: screentime
+
+select:
+  - platform: template
+    name: Thermostat Mode
+    id: mode
+    options:
+      - "off"
+      - "cool"
+      - "heat"
+    initial_option: "off"
+    optimistic: true
+
+button:
+  - platform: restart
+    name: "$devicename Restart"
+    id: restart_esphome
+    icon: "mdi:restart"
+
+sensor:
+  - platform: uptime
+    name: "$devicename Uptime"
+  - platform: wifi_signal
+    name: "$devicename WiFi Signal"
+    update_interval: 60s
+  - platform: homeassistant
+    id: outdoor_temperature
+    entity_id: sensor.gw1000_v1_7_6_outdoor_temperature
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: lbl_temp
+            text: !lambda |-
+              char buffer[10];
+              sprintf(buffer, "%.1f°", x);
+              return buffer;
+  - platform: homeassistant
+    id: max_temperature
+    entity_id: sensor.brighton_east_temp_max_0
+  - platform: homeassistant
+    id: min_temperature
+    entity_id: sensor.brighton_east_temp_min_1
+  - platform: homeassistant
+    id: thermostat_temperature
+    entity_id: climate.thermostat_master
+    attribute: temperature
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: lbl_setpoint_temp
+            text: !lambda |-
+              char buffer[16];
+              sprintf(buffer, "Set: %.1f°", x);
+              return buffer;
+        - lvgl.label.update:
+            id: lbl_arc_temp
+            text: !lambda |-
+              char buffer[10];
+              sprintf(buffer, "%.1f°", x);
+              return buffer;
+        - lambda: |-
+            lv_arc_set_value(id(temp_arc), (int16_t)x);
+  - platform: homeassistant
+    id: room_temperature
+    entity_id: sensor.temp_master_temperature
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: lbl_room_temp
+            text: !lambda |-
+              char buffer[10];
+              sprintf(buffer, "%.1f°", x);
+              return buffer;
+        - lvgl.label.update:
+            id: lbl_arc_room_temp
+            text: !lambda |-
+              char buffer[16];
+              sprintf(buffer, "Now: %.1f°", x);
+              return buffer;
+
+  - platform: template
+    name: "$devicename free memory"
+    lambda: return heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    icon: "mdi:memory"
+    entity_category: diagnostic
+    state_class: measurement
+    unit_of_measurement: "b"
+    update_interval: 60s
+
+spi:
+  mosi_pin: $mopin
+  clk_pin: $clpin
+
+i2c:
+  sda: $sdapin
+  scl: $sclpin
+
+number:
+  # This is a binary off or on to toggle the virtual thermostat states between off or heat or cool
+  # Where 0 is off and 1 is heat and 2 is cool
+  # There is now a 'climate.toggle' option but for me I don't want to cycle through all the options
+  - platform: template
+    optimistic: true
+    name: "$devicename therm state"
+    id: thermostat_state
+    min_value: 0
+    max_value: 2
+    # on boot, use the value it had if possible
+    restore_value: True
+    # if can't restore the value, then make it 0 ie off
+    initial_value: 0
+    update_interval: 1s
+    step: 1
+
+#Create a script to turn the screen off after a set period
+script:
+  - id: screentime
+    mode: restart
+    then:
+      - light.turn_on: back_light
+      - delay: $screensaver
+      - light.turn_off: back_light
+  - id: page_next
+    then:
+      - lvgl.page.next
+  - id: page_prev
+    then:
+      - lvgl.page.previous
+  - id: increase_temp
+    then:
+      - homeassistant.service:
+          service: climate.set_temperature
+          data:
+            entity_id: climate.thermostat_master
+            temperature: !lambda 'return id(thermostat_temperature).state + 1.0;'
+  - id: decrease_temp
+    then:
+      - homeassistant.service:
+          service: climate.set_temperature
+          data:
+            entity_id: climate.thermostat_master
+            temperature: !lambda 'return id(thermostat_temperature).state - 1.0;'
+  - id: dim_screen
+    then:
+      - light.turn_on:
+          id: back_light
+          brightness: 30%
+      - logger.log: "script: dim to 30%"
+  - id: bright_screen
+    then:
+      - light.turn_on:
+          id: back_light
+          brightness: 100%
+      - logger.log: "script: brightness to full"
+  - id: time_update
+    then:
+      - lvgl.indicator.update:
+          id: minute_hand
+          value: !lambda |-
+            return id(esptime).now().minute;
+      - lvgl.indicator.update:
+          id: hour_hand
+          value: !lambda |-
+            auto now = id(esptime).now();
+            return std::fmod(now.hour, 12) * 60 + now.minute;
+      - lvgl.label.update:
+          id: date_label
+          text: !lambda |-
+            static const char * const mon_names[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+            static char date_buf[8];
+            auto now = id(esptime).now();
+            snprintf(date_buf, sizeof(date_buf), "%s %2d", mon_names[now.month-1], now.day_of_month);
+            return date_buf;
+      - lvgl.label.update:
+          id: day_label
+          text: !lambda |-
+            static const char * const day_names[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+            return day_names[id(esptime).now().day_of_week - 1];
+
+
+
+touchscreen:
+  platform: cst816
+  id: my_touch_screen
+  skip_probe: True #Skip reading the chip ID on startup. May be required for some variants (e.g. CST816S) that do not respond to i2c commands except after touches are registered
+  #  interrupt_pin: $intpin # If enable this now, the touch screen does not work
+
+  on_update:
+    - lambda: |-
+        const int swipe_threshold = 30;
+        const int center_x = 120;
+        const int center_y = 120;
+        // The radius of the central area where swipes are detected on the arc page.
+        // Gestures starting *outside* this radius are considered arc adjustments and ignored.
+        const int swipe_zone_radius = 95;
+        const int swipe_zone_radius_squared = swipe_zone_radius * swipe_zone_radius; // Use squared values to avoid sqrt()
+
+        for (auto touch: touches) {
+          // Only process swipe-end events (state 6)
+          if (touch.state == 6) {
+
+            bool process_as_swipe = true; // By default, assume the gesture is a swipe
+
+            // Apply special logic only when on the arc_page
+            if (lv_scr_act() == (lv_obj_t *)id(arc_page)) {
+              // Calculate the squared distance of the touch's starting point from the screen's center
+              int dx = touch.x_org - center_x;
+              int dy = touch.y_org - center_y;
+              int dist_squared = (dx * dx) + (dy * dy);
+
+              // If the touch started *outside* the central swipe circle, it's on the arc widget.
+              // In this case, we should NOT process it as a swipe.
+              if (dist_squared > swipe_zone_radius_squared) {
+                process_as_swipe = false;
+              }
+            }
+
+            // If the gesture is determined to be a valid swipe, process it
+            if (process_as_swipe) {
+              int16_t delta_x = touch.x_prev - touch.x_org;
+              int16_t delta_y = touch.y_prev - touch.y_org;
+
+              if (abs(delta_x) > abs(delta_y)) { // Horizontal swipe
+                if (abs(delta_x) > swipe_threshold) {
+                  if (delta_x > 0) {
+                    ESP_LOGI("touch", "Swipe Right -> Previous Page");
+                    id(page_prev).execute();
+                  } else {
+                    ESP_LOGI("touch", "Swipe Left -> Next Page");
+                    id(page_next).execute();
+                  }
+                }
+              } else { // Vertical swipe
+                if (abs(delta_y) > swipe_threshold) {
+                  if (delta_y > 0) {
+                    ESP_LOGI("touch", "Swipe Down");
+                    id(decrease_temp).execute();
+                  } else {
+                    ESP_LOGI("touch", "Swipe Up");
+                    id(increase_temp).execute();
+                  }
+                }
+              }
+            }
+          }
+        }
+
+# Need to turn on backlight as by default is not on
+output:
+  - platform: ledc
+    pin: $bkpin
+    id: gpio_3_backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: gpio_3_backlight_pwm
+    name: "Display Backlight"
+    id: back_light
+    restore_mode: $screenstart
+
+font:
+  - file: "gfonts://Roboto"
+    id: info_font
+    size: 24 
+    glyphs:
+      ['$','&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z','^', 'Λ', 'ö', '/']    
+  - file: "gfonts://Roboto"
+    id: font_50
+    size: 50 
+  - file: "gfonts://Roboto"
+    id: font_40
+    size: 40 
+  - file: "gfonts://Roboto"
+    id: icons_50
+    size: 6
+
+color:
+  - id: my_red
+    hex: FF0000
+  - id: my_green
+    hex: 008000
+  - id: my_blue
+    hex: 0000FF
+  - id: my_yellow
+    hex: FFFF00
+
+display:
+  - platform: ili9xxx
+    model: GC9A01A
+    id: watchface
+    invert_colors: true
+    reset_pin: $repin
+    cs_pin: $cspin
+    dc_pin:
+      number: $dcpin
+      ignore_strapping_warning: true
+    update_interval: 1s
+
+lvgl:
+  displays:
+    - watchface
+  default_font: icons_50
+  disp_bg_color: black
+
+  touchscreens:
+    touchscreen_id: my_touch_screen
+
+  style_definitions:
+    - id: date_style    
+      text_font: unscii_8
+      align: center
+      text_color: 0x000000
+      bg_opa: cover
+      radius: 4
+      pad_all: 2
+
+  pages:
+    - id: arc_page
+      bg_color: black
+      widgets:
+        - arc:
+            id: temp_arc
+            align: CENTER
+            width: 220
+            height: 220
+            outline_width: 0
+            border_width: 0
+            shadow_width: 0
+            min_value: 18
+            max_value: 28
+            adjustable: true
+            on_value:
+              - homeassistant.service:
+                  service: climate.set_temperature
+                  data:
+                    entity_id: climate.thermostat_master
+                    temperature: !lambda 'return x;'
+              - lvgl.label.update:
+                  id: lbl_arc_temp
+                  text: !lambda |-
+                    char buffer[10];
+                    sprintf(buffer, "%.1f°", x);
+                    return buffer;
+        - obj:
+            align: CENTER
+            bg_opa: 0
+            width: 120
+            height: 120
+            outline_width: 0
+            border_width: 0
+            shadow_width: 0
+            scrollbar_mode: 'OFF'
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 5
+            widgets:
+              - label:
+                  id: lbl_arc_temp
+                  text_font: font_40
+                  text_color: my_green
+                  text: "--.-°"
+              - label:
+                  id: lbl_arc_room_temp
+                  text: "Now: --.-°"
+                  text_font: info_font
+                  text_color: my_green
+    - id: main_page
+      bg_color: black
+      widgets:
+        - obj:
+            align: CENTER
+            width: 240
+            height: 240
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 10 # Adds a 10px space between the labels
+            widgets:
+              - label:
+                  text: "Swipe Up Λ"
+                  text_align: CENTER
+                  text_font: info_font
+                  text_color: 0xAAAAAA
+                  pad_left: 20
+              - label:
+                  id: lbl_room_temp
+                  text: "--.-°"
+                  text_align: CENTER
+                  text_font: font_50
+                  text_color: 0x00FF00
+                  outline_width: 0
+                  pad_left: 40 # Moves the label 40px to the right
+              - label:
+                  id: lbl_setpoint_temp
+                  text: "Set: --.-°"
+                  text_align: CENTER
+                  text_font: info_font
+                  text_color: 0xAAAAAA
+                  pad_left: 20
+                  outline_color: black
+              - label:
+                  text: "Swipe Down V"
+                  text_align: CENTER
+                  text_font: info_font
+                  text_color: 0xAAAAAA
+                  pad_left: 20
+    - id: weather_page
+      bg_color: black
+      outline_color: black
+      outline_width: 0
+      border_width: 0
+      shadow_width: 0
+      widgets:
+        - obj:
+            align: CENTER
+            bg_color: black
+            outline_color: black
+            outline_width: 0
+            border_width: 0
+            shadow_width: 0
+            width: 200
+            height: 200
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 5 # Adds a small space between the labels
+            widgets:
+            - label:
+                id: lbl_temp
+                text: "--.-°"
+                text_align: CENTER
+                text_font: font_50
+                text_color: 0xffffff
+                outline_color: black
+            - label:
+                text: "Outside"
+                text_align: CENTER
+                text_font: info_font
+                text_color: 0xAAAAAA
+
+    - id: clock_page
+      widgets:
+        - obj: # clock container
+            height: SIZE_CONTENT
+            width: 240
+            align: CENTER
+            pad_all: 0
+            border_width: 0
+            bg_color: 0xFFFFFF
+            widgets:
+              - meter: # clock face
+                  height: 220
+                  width: 220
+                  align: CENTER
+                  bg_opa: TRANSP
+                  border_width: 0
+                  text_color: 0x000000
+                  scales:
+                    - range_from: 0 # minutes scale
+                      range_to: 60
+                      angle_range: 360
+                      rotation: 270
+                      ticks:
+                        width: 1
+                        count: 61
+                        length: 10
+                        color: 0x000000
+                      indicators:
+                        - line:
+                            id: minute_hand
+                            width: 3
+                            color: 0xa6a6a6
+                            r_mod: -4
+                            value: 0
+                    - range_from: 1 # hours scale for labels
+                      range_to: 12
+                      angle_range: 330
+                      rotation: 300
+                      ticks:
+                        width: 1
+                        count: 12
+                        length: 1
+                        major:
+                          stride: 1
+                          width: 4
+                          length: 10
+                          color: 0xC0C0C0
+                          label_gap: 12
+                    - range_from: 0 # hi-res hours scale for hand
+                      range_to: 720
+                      angle_range: 360
+                      rotation: 270
+                      ticks:
+                        count: 0
+                      indicators:
+                        - line:
+                            id: hour_hand
+                            width: 5
+                            color: 0xa6a6a6
+                            r_mod: -30
+                            value: 0
+              - label:
+                  styles: date_style
+                  id: day_label
+                  y: -30
+              - label:
+                  id: date_label
+                  styles: date_style
+                  y: 30
