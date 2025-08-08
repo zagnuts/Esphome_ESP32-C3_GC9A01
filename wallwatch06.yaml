@@ -1,9 +1,14 @@
-# V2.0 - 23 July 2025 - Fixed YAML indentation in on_value trigger
-# Compiled and tested on esphome 2025.7.3 and HA 2025.7.3
+# Compiled and tested on esphome 2025.7.5 and HA 2025.8.0
 substitutions:
+  # These are unique to the device and room
   devicename: wallwatch06
   friendname: WallWatch06
   location: master
+  thermo: climate.thermostat_master
+  rtemp: sensor.temp_master_temperature
+
+  # The following are boilerplate and may be copied and pasted in bulk
+  ver: "2025.8.10" # Changed version to date of release in yyyy.mm.dd format
   # Change the timezone to suit your location, or even just remove it - it will likely be picked up automatically
   timez: Australia/Melbourne
   board: esp32-c3-devkitm-1
@@ -32,7 +37,7 @@ esphome:
   friendly_name: $friendname
   project:
     name: "ninkasi.wallwatch"
-    version: "2025.7.23" # Changed version to date of release
+    version: $ver
   comment: Wall Controller $location
 
 esp32:
@@ -122,6 +127,21 @@ button:
     id: restart_esphome
     icon: "mdi:restart"
 
+text_sensor:
+  - platform: homeassistant
+    id: thermostat_hvac_mode
+    entity_id: $thermo
+    attribute: hvac_mode
+    internal: true
+    on_value:
+      - number.set:
+          id: thermostat_state
+          value: !lambda |-
+            if (x == "off") return 0;
+            if (x == "heat") return 1;
+            if (x == "cool") return 2;
+            return 0; // Default to off
+
 sensor:
   - platform: uptime
     name: "$devicename Uptime"
@@ -147,16 +167,11 @@ sensor:
     entity_id: sensor.brighton_east_temp_min_1
   - platform: homeassistant
     id: thermostat_temperature
-    entity_id: climate.thermostat_master
+    entity_id: $thermo
     attribute: temperature
     on_value:
       then:
-        - lvgl.label.update:
-            id: lbl_setpoint_temp
-            text: !lambda |-
-              char buffer[16];
-              sprintf(buffer, "Set: %.1f°", x);
-              return buffer;
+        # Action for lbl_setpoint_temp is removed
         - lvgl.label.update:
             id: lbl_arc_temp
             text: !lambda |-
@@ -167,15 +182,10 @@ sensor:
             lv_arc_set_value(id(temp_arc), (int16_t)x);
   - platform: homeassistant
     id: room_temperature
-    entity_id: sensor.temp_master_temperature
+    entity_id: $rtemp
     on_value:
       then:
-        - lvgl.label.update:
-            id: lbl_room_temp
-            text: !lambda |-
-              char buffer[10];
-              sprintf(buffer, "%.1f°", x);
-              return buffer;
+        # Action for lbl_room_temp is removed
         - lvgl.label.update:
             id: lbl_arc_room_temp
             text: !lambda |-
@@ -201,21 +211,64 @@ i2c:
   scl: $sclpin
 
 number:
-  # This is a binary off or on to toggle the virtual thermostat states between off or heat or cool
-  # Where 0 is off and 1 is heat and 2 is cool
-  # There is now a 'climate.toggle' option but for me I don't want to cycle through all the options
   - platform: template
     optimistic: true
     name: "$devicename therm state"
     id: thermostat_state
     min_value: 0
     max_value: 2
-    # on boot, use the value it had if possible
+    step: 1
     restore_value: True
-    # if can't restore the value, then make it 0 ie off
     initial_value: 0
     update_interval: 1s
-    step: 1
+    on_value:
+      then:
+        # This action updates the button's text (e.g., "Off", "Heat", "Cool")
+        - lvgl.label.update:
+            id: thermo_button_label
+            text: !lambda |-
+              if (x == 0) return "Off";
+              if (x == 1) return "Heat";
+              if (x == 2) return "Cool";
+              return "Unknown";
+        # This action updates the text color
+        - lambda: |-
+            auto label_obj = (lv_obj_t *)id(thermo_button_label);
+            if (x == 0) { // Off state
+              lv_obj_set_style_text_color(label_obj, lv_color_white(), 0);
+            } else if (x == 1) { // Heat state
+              lv_obj_set_style_text_color(label_obj, lv_color_make(id(my_red).r, id(my_red).g, id(my_red).b), 0);
+            } else if (x == 2) { // Cool state
+              lv_obj_set_style_text_color(label_obj, lv_color_make(id(my_green).r, id(my_green).g, id(my_green).b), 0);
+            }
+        # These actions send the command to Home Assistant
+        - if:
+            condition:
+              lambda: 'return x == 0;'
+            then:
+              - homeassistant.service:
+                  service: climate.set_hvac_mode
+                  data:
+                    entity_id: $thermo
+                    hvac_mode: 'off'
+        - if:
+            condition:
+              lambda: 'return x == 1;'
+            then:
+              - homeassistant.service:
+                  service: climate.set_hvac_mode
+                  data:
+                    entity_id: $thermo
+                    hvac_mode: 'heat'
+        - if:
+            condition:
+              lambda: 'return x == 2;'
+            then:
+              - homeassistant.service:
+                  service: climate.set_hvac_mode
+                  data:
+                    entity_id: $thermo
+                    hvac_mode: 'cool'
 
 #Create a script to turn the screen off after a set period
 script:
@@ -236,14 +289,14 @@ script:
       - homeassistant.service:
           service: climate.set_temperature
           data:
-            entity_id: climate.thermostat_master
+            entity_id: $thermo
             temperature: !lambda 'return id(thermostat_temperature).state + 1.0;'
   - id: decrease_temp
     then:
       - homeassistant.service:
           service: climate.set_temperature
           data:
-            entity_id: climate.thermostat_master
+            entity_id: $thermo
             temperature: !lambda 'return id(thermostat_temperature).state - 1.0;'
   - id: dim_screen
     then:
@@ -443,7 +496,7 @@ lvgl:
               - homeassistant.service:
                   service: climate.set_temperature
                   data:
-                    entity_id: climate.thermostat_master
+                    entity_id: $thermo
                     temperature: !lambda 'return x;'
               - lvgl.label.update:
                   id: lbl_arc_temp
@@ -477,48 +530,32 @@ lvgl:
                   text: "Now: --.-°"
                   text_font: info_font
                   text_color: my_green
-    - id: main_page
-      bg_color: black
-      widgets:
-        - obj:
-            align: CENTER
-            width: 240
-            height: 240
-            layout:
-              type: FLEX
-              flex_flow: COLUMN
-              flex_align_main: CENTER
-              flex_align_cross: CENTER
-              pad_row: 10 # Adds a 10px space between the labels
+        - button:
+            id: thermo_button
+            align: BOTTOM_MID
+            width: 100
+            y: -10
+            # Corrected: Style properties are moved out of the 'styles:' block
+            bg_color: black
+            border_width: 1
+            border_color: 0x444444
+            pad_left: 20
+            pad_right: 20
+            pad_top: 10
+            pad_bottom: 10
+            on_click:
+              then:
+                # Cycle through states 0, 1, 2
+                - number.set:
+                    id: thermostat_state
+                    value: !lambda 'return fmod(id(thermostat_state).state + 1, 3);'
             widgets:
               - label:
-                  text: "Swipe Up Λ"
-                  text_align: CENTER
+                  id: thermo_button_label
+                  text: "Mode"
                   text_font: info_font
-                  text_color: 0xAAAAAA
-                  pad_left: 20
-              - label:
-                  id: lbl_room_temp
-                  text: "--.-°"
-                  text_align: CENTER
-                  text_font: font_50
-                  text_color: 0x00FF00
-                  outline_width: 0
-                  pad_left: 40 # Moves the label 40px to the right
-              - label:
-                  id: lbl_setpoint_temp
-                  text: "Set: --.-°"
-                  text_align: CENTER
-                  text_font: info_font
-                  text_color: 0xAAAAAA
-                  pad_left: 20
-                  outline_color: black
-              - label:
-                  text: "Swipe Down V"
-                  text_align: CENTER
-                  text_font: info_font
-                  text_color: 0xAAAAAA
-                  pad_left: 20
+                  text_color: 0xFFFFFF # Default text color to white
+
     - id: weather_page
       bg_color: black
       outline_color: black
@@ -558,20 +595,20 @@ lvgl:
     - id: clock_page
       widgets:
         - obj: # clock container
-            height: SIZE_CONTENT
+            height: 240
             width: 240
             align: CENTER
             pad_all: 0
             border_width: 0
-            bg_color: 0xFFFFFF
+            bg_color: 0x000000 # black
             widgets:
               - meter: # clock face
-                  height: 220
-                  width: 220
+                  height: 240
+                  width: 240
                   align: CENTER
                   bg_opa: TRANSP
                   border_width: 0
-                  text_color: 0x000000
+                  text_color: 0xFFFFFF # white
                   scales:
                     - range_from: 0 # minutes scale
                       range_to: 60
@@ -581,12 +618,12 @@ lvgl:
                         width: 1
                         count: 61
                         length: 10
-                        color: 0x000000
+                        color: 0xFFFFFF # white
                       indicators:
                         - line:
                             id: minute_hand
                             width: 3
-                            color: 0xa6a6a6
+                            color: 0xFF0000 # Red
                             r_mod: -4
                             value: 0
                     - range_from: 1 # hours scale for labels
@@ -601,7 +638,7 @@ lvgl:
                           stride: 1
                           width: 4
                           length: 10
-                          color: 0xC0C0C0
+                          color: 0xC0C0C0 # silver
                           label_gap: 12
                     - range_from: 0 # hi-res hours scale for hand
                       range_to: 720
@@ -613,7 +650,7 @@ lvgl:
                         - line:
                             id: hour_hand
                             width: 5
-                            color: 0xa6a6a6
+                            color: 0xFF0000 # Red
                             r_mod: -30
                             value: 0
               - label:
